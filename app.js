@@ -1,4 +1,4 @@
-Paste this over your entire `app.js`:
+
 
 ```js
 const CONFIG = window.APP_CONFIG || {};
