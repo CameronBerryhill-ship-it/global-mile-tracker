@@ -1,5 +1,3 @@
-
-
 ```js
 const CONFIG = window.APP_CONFIG || {};
 
