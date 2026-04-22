@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Global Mile Tracker</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div id="configWarning" class="banner warning hidden">
+      Update <strong>config.js</strong> with your Supabase project URL and anon key.
+    </div>
+
+    <section id="authView" class="auth-shell hidden">
+      <div class="auth-card">
+        <h1>Global Mile Tracker</h1>
+        <p class="muted">Sign in to access the live board.</p>
+        <label>Email</label>
+        <input id="loginEmail" type="email" placeholder="name@company.com" />
+        <label>Password</label>
+        <input id="loginPassword" type="password" placeholder="Password" />
+        <div class="row gap">
+          <button id="signInBtn" class="primary">Sign In</button>
+        </div>
+        <p id="authStatus" class="status-text"></p>
+      </div>
+    </section>
+
+    <section id="trackerView" class="hidden">
+      <div class="wrap">
+        <div class="top">
+          <div class="card">
+            <div class="inner">
+              <div class="space-between">
+                <div>
+                  <h1>Global Mile Tracker</h1>
+                  <p class="muted">Live shared board for DIAG and Repair approval workflow.</p>
+                </div>
+                <div class="row gap">
+                  <span id="liveBadge" class="pill live">Live</span>
+                  <button id="signOutBtn" type="button">Sign Out</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="inner stats">
+              <div class="stat">
+                <div class="label">Total</div>
+                <div class="value" id="statTotal">0</div>
+              </div>
+              <div class="stat">
+                <div class="label">Pending</div>
+                <div class="value" id="statPending">0</div>
+              </div>
+              <div class="stat">
+                <div class="label">Diag Open</div>
+                <div class="value" id="statDiagOpen">0</div>
+              </div>
+              <div class="stat">
+                <div class="label">Completed</div>
+                <div class="value" id="statCompleted">0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="appStatus" class="banner hidden"></div>
+
+        <div class="main">
+          <div class="card">
+            <div class="inner">
+              <h2 id="formTitle">Add New Case</h2>
+
+              <div class="form-section">
+                <label>Paste Email / Request Text</label>
+                <div class="paste-box">
+                  <textarea id="pasteInput" placeholder="Paste the request email text here..."></textarea>
+                  <p class="muted small">Paste the email text, then click Parse & Autofill.</p>
+                  <div class="row gap">
+                    <button id="parseBtn" type="button" class="primary">Parse & Autofill</button>
+                    <button id="exampleBtn" type="button">Load Example</button>
+                  </div>
+                  <p id="pasteStatus" class="status-text">Waiting for pasted text.</p>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <div>
+                  <label>Case Number</label>
+                  <input id="case_number" placeholder="20063260601" />
+                </div>
+              </div>
+
+              <div class="form-grid two">
+                <div>
+                  <label>Container #</label>
+                  <input id="container_number" placeholder="TLLU7777690" />
+                </div>
+                <div>
+                  <label>Chassis #</label>
+                  <input id="chassis_number" placeholder="HDMZ50298" />
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <div>
+                  <label>Location / Address</label>
+                  <input id="location" placeholder="5990 N Cajon Blvd, San Bernardino, CA 92407" />
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <div>
+                  <label>Repair Description</label>
+                  <textarea id="repair_description" placeholder="Clearance and marker lights are all out"></textarea>
+                </div>
+              </div>
+
+              <div class="form-grid two">
+                <div>
+                  <label>Diag RO #</label>
+                  <input id="diag_ro_number" placeholder="1229-0003035" />
+                </div>
+                <div>
+                  <label>Repair RO #</label>
+                  <input id="repair_ro_number" placeholder="1229-000xxxx" />
+                </div>
+              </div>
+
+              <div class="form-grid three">
+                <div>
+                  <label>Diag Comp Code</label>
+                  <input id="diag_comp_code" placeholder="998-405" />
+                </div>
+                <div>
+                  <label>Diag Description</label>
+                  <input id="diag_cc_description" placeholder="Diagnose Light issue" />
+                </div>
+                <div>
+                  <label>Diag Labor Hours</label>
+                  <input id="diag_cc_hours" placeholder="1" />
+                </div>
+              </div>
+
+              <div class="form-grid three">
+                <div>
+                  <label>Repair Comp Code</label>
+                  <input id="repair_comp_code" placeholder="998-394" />
+                </div>
+                <div>
+                  <label>Repair Description</label>
+                  <input id="repair_cc_description" placeholder="Travel Time" />
+                </div>
+                <div>
+                  <label>Repair Labor Hours</label>
+                  <input id="repair_cc_hours" placeholder="1" />
+                </div>
+              </div>
+
+              <div class="form-grid two">
+                <div>
+                  <label>Status</label>
+                  <select id="status">
+                    <option>Pending Shop Availability</option>
+                    <option>Diag RO Open</option>
+                    <option>Diag Done</option>
+                    <option>Repair RO Open</option>
+                    <option>Repair Order Completed</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Notes</label>
+                  <input id="notes" placeholder="Internal notes" />
+                </div>
+              </div>
+
+              <div class="row gap wrap-row top-pad">
+                <button id="saveBtn" type="button" class="primary">Add Case</button>
+                <button id="cancelBtn" type="button">Cancel</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="inner">
+              <div class="toolbar">
+                <input id="searchInput" placeholder="Search case, container, chassis, RO, location..." />
+                <select id="statusFilter">
+                  <option value="all">All Statuses</option>
+                  <option>Pending Shop Availability</option>
+                  <option>Diag RO Open</option>
+                  <option>Diag Done</option>
+                  <option>Repair RO Open</option>
+                  <option>Repair Order Completed</option>
+                </select>
+              </div>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Case #</th>
+                      <th>Container</th>
+                      <th>Chassis</th>
+                      <th>Location</th>
+                      <th>Description</th>
+                      <th>Diag RO</th>
+                      <th>Repair RO</th>
+                      <th>Status</th>
+                      <th>Notes</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="emailModal" class="modal-backdrop hidden">
+        <div class="modal">
+          <div class="space-between">
+            <div>
+              <h2>Send Approval Emails</h2>
+              <p id="modalMeta" class="muted"></p>
+            </div>
+            <button id="closeModalBtn" type="button">Close</button>
+          </div>
+
+          <div class="row gap wrap-row top-pad">
+            <button id="copyDiagBtn" type="button" class="primary">Copy DIAG Approval</button>
+            <button id="sendDiagBtn" type="button">Send DIAG Approval</button>
+            <button id="copyRepairBtn" type="button" class="primary">Copy Repair Approval</button>
+            <button id="sendRepairBtn" type="button">Send Repair Approval</button>
+            <button id="saveModalBtn" type="button">Save To Case</button>
+          </div>
+
+          <div class="email-grid top-pad">
+            <div class="card">
+              <div class="inner">
+                <h3>1) DIAG RO Approval</h3>
+                <div class="form-grid">
+                  <div>
+                    <label>Greeting</label>
+                    <input id="m_diag_greeting" value="Hello Amz," />
+                  </div>
+                  <div>
+                    <label>Opening Line</label>
+                    <input id="m_diag_opening" value="Thank you for the opportunity" />
+                  </div>
+                  <div>
+                    <label>DIAG RO #</label>
+                    <input id="m_diag_ro" />
+                  </div>
+                </div>
+
+                <div class="form-grid three">
+                  <div>
+                    <label>Diag Comp Code</label>
+                    <input id="m_diag_code" />
+                  </div>
+                  <div>
+                    <label>Diag Description</label>
+                    <input id="m_diag_desc" />
+                  </div>
+                  <div>
+                    <label>Diag Labor Hours</label>
+                    <input id="m_diag_hours" />
+                  </div>
+                </div>
+
+                <div class="form-grid">
+                  <div>
+                    <label>Labor Rate</label>
+                    <input id="m_diag_rate" value="89" />
+                  </div>
+                </div>
+
+                <div class="form-grid">
+                  <div>
+                    <label>Generated DIAG Approval Email</label>
+                    <div id="diagOut" class="output"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="inner">
+                <h3>2) Repair RO Approval</h3>
+
+                <div class="form-grid">
+                  <div>
+                    <label>Greeting</label>
+                    <input id="m_rep_greeting" value="Hello Amz," />
+                  </div>
+                  <div>
+                    <label>Repair RO #</label>
+                    <input id="m_rep_ro" />
+                  </div>
+                  <div>
+                    <label>Reference DIAG RO</label>
+                    <input id="m_rep_ref" />
+                  </div>
+                </div>
+
+                <div class="form-grid three">
+                  <div>
+                    <label>Repair Comp Code</label>
+                    <input id="m_rep_code" />
+                  </div>
+                  <div>
+                    <label>Repair Description</label>
+                    <input id="m_rep_desc" />
+                  </div>
+                  <div>
+                    <label>Repair Labor Hours</label>
+                    <input id="m_rep_hours" />
+                  </div>
+                </div>
+
+                <div class="form-grid three">
+                  <div>
+                    <label>Labor Rate</label>
+                    <input id="m_rep_rate" value="89" />
+                  </div>
+                  <div>
+                    <label>Travel Hours</label>
+                    <input id="m_rep_travel_hours" value="0" />
+                  </div>
+                  <div>
+                    <label>Travel Rate</label>
+                    <input id="m_rep_travel_rate" value="89" />
+                  </div>
+                </div>
+
+                <div class="form-grid">
+                  <div>
+                    <label>Repair Tech Notes</label>
+                    <textarea id="m_rep_notes" placeholder="Paste repair tech notes here..."></textarea>
+                  </div>
+                </div>
+
+                <div class="form-grid">
+                  <div>
+                    <label>Completion Note</label>
+                    <input id="m_rep_completion" value="Unit is ready for service." />
+                  </div>
+                </div>
+
+                <div class="form-grid">
+                  <div>
+                    <label>Generated Repair Approval Email</label>
+                    <div id="repOut" class="output"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
