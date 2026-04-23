@@ -1,0 +1,43 @@
+Lighting diagnostics	998-405
+Travel Time	998-394
+Brake shoe R&R	998-401
+Brake inspection	998-402
+Brake chamber R&R	998-408
+Trailer ABS diagnostic	998-434
+Mud flap R&R	998-418
+Mud flap dual R&R	998-420
+Shock replacement (pair)	998-421
+Trailer airbag R&R	998-422
+Tire air / torque check	998-423
+Tire air single	998-424
+ABS relay valve R&R	998-410
+ABS sensor harness install	998-409
+Brake adjustment	998-411
+Cross tube assembly R&R	998-414
+Hub cap / wheel seal	998-415
+Leveling valve R&R	998-417
+Battery replacement	998-399
+Battery test / charge	998-400
+Alternator replacement	998-398
+AC diagnostics	998-397
+Ignition diagnostics	998-404
+Marker light R&R	998-406
+Parked regen	998-407
+Trailer lubrication	998-435
+Initial intake inspection	999-779
+Handoff inspection	999-773
+Safety inspection	999-778
+Dry run	999-039
+Parts run	999-002
+Site meeting / inspection	999-776
+Wait time	999-051
+Training	999-065
+Shop maintenance	999-009
+Hazardous waste disposal	998-171
+Non-hazardous disposal	998-172
+Restock AFP boxes	998-170
+7-way receptacle	034-003-161
+Mud flap hardware	014-014-002
+Mud flap hanger	014-014-005
+Mud flap arm bracket	078-009-012
+Mud flap arm	078-009-014
