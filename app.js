@@ -13,10 +13,15 @@ const STATUS_OPTIONS = [
   "Repair Order Completed",
 ];
 
+const DEFAULT_LABOR_RATE = 89;
+const DEFAULT_PART_MARKUP = 25;
+const MAX_LINE_ROWS = 5;
+
 let editingId = null;
 let activeCaseId = null;
 let rows = [];
 let channel = null;
+let COMP_CATALOG = [];
 
 const el = (id) => document.getElementById(id);
 
@@ -24,8 +29,6 @@ const sb = window.supabase.createClient(
   CONFIG.SUPABASE_URL,
   CONFIG.SUPABASE_ANON_KEY
 );
-
-let COMP_CATALOG = [];
 
 function showMessage(text, kind = "info") {
   const node = el("appStatus");
@@ -45,6 +48,24 @@ function cleanValue(v) {
     .replace(/^[\s:#\-\/]+/, "")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+function money(v) {
+  const n = parseFloat(v);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+function fmtMoney(v) {
+  return `$${money(v).toFixed(2)}`;
+}
+
+function escapeHtml(v) {
+  return String(v ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function parseRequestText(text) {
@@ -81,14 +102,9 @@ function parseRequestText(text) {
     return m && m[1] ? cleanValue(m[1].replace(/\n+/g, " ")) : "";
   }
 
-  out.case_number =
-    getLine(/^(?:Case\s*(?:#|Number)?|ISA)\s*[:#-]?\s*(.+)$/i);
-
-  out.container_number =
-    getLine(/^(?:Container|Trailer)\s*(?:#|Number|ID)?\s*[:#-]?\s*(.+)$/i);
-
-  out.chassis_number =
-    getLine(/^Chassis\s*(?:#|Number|ID)?\s*[:#-]?\s*(.+)$/i);
+  out.case_number = getLine(/^(?:Case\s*(?:#|Number)?|ISA)\s*[:#-]?\s*(.+)$/i);
+  out.container_number = getLine(/^(?:Container|Trailer)\s*(?:#|Number|ID)?\s*[:#-]?\s*(.+)$/i);
+  out.chassis_number = getLine(/^Chassis\s*(?:#|Number|ID)?\s*[:#-]?\s*(.+)$/i);
 
   out.location = getSection(
     ["Physical\\s*location", "Location"],
@@ -172,25 +188,310 @@ Additional information -`;
   }
 }
 
-function money(v) {
-  const n = parseFloat(v);
-  return Number.isNaN(n) ? 0 : n;
+async function loadCompCatalog() {
+  try {
+    const res = await fetch("./comp_codes.txt");
+    const txt = await res.text();
+    const lines = txt.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+
+    COMP_CATALOG = lines.map((line) => {
+      const parts = line.split(/\t+/).map(x => x.trim()).filter(Boolean);
+      return { desc: parts[0] || "", code: parts[1] || "" };
+    }).filter(x => x.code);
+  } catch (err) {
+    console.error("Could not load comp codes", err);
+    COMP_CATALOG = [];
+  }
 }
 
-function fmtMoney(v) {
-  return `$${v.toFixed(2)}`;
+function findCompMatch(value) {
+  const q = String(value || "").trim().toLowerCase();
+  if (!q) return null;
+  return COMP_CATALOG.find(c =>
+    c.code.toLowerCase() === q ||
+    c.code.toLowerCase().includes(q) ||
+    c.desc.toLowerCase().includes(q)
+  ) || null;
 }
 
-function escapeHtml(v) {
-  return String(v)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+function showCompSuggestions(prefix, index, value) {
+  const wrap = document.getElementById(`${prefix}_suggest_${index}`);
+  if (!wrap) return;
+  wrap.innerHTML = "";
+
+  const q = String(value || "").trim().toLowerCase();
+  if (!q) return;
+
+  const matches = COMP_CATALOG.filter(c =>
+    c.code.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q)
+  ).slice(0, 8);
+
+  if (!matches.length) return;
+
+  const box = document.createElement("div");
+  box.className = "line-suggest-list";
+  box.innerHTML = matches.map(c => `
+    <div class="line-suggest-item" data-prefix="${prefix}" data-index="${index}" data-code="${escapeHtml(c.code)}" data-desc="${escapeHtml(c.desc)}">
+      <strong>${escapeHtml(c.code)}</strong><br><span>${escapeHtml(c.desc)}</span>
+    </div>
+  `).join("");
+
+  wrap.appendChild(box);
+}
+
+function hideCompSuggestions() {
+  document.querySelectorAll(".line-suggest").forEach(x => x.innerHTML = "");
+}
+
+function makeCompRow(prefix, index, enabled = false) {
+  const label = prefix.includes("diag") ? "Diag" : "Repair";
+  return `
+    <div class="line-row ${enabled ? "" : "line-disabled"}">
+      <div class="line-grid comp-upgrade-grid">
+        <div>
+          <label>${label} Comp Code</label>
+          <input id="${prefix}_code_${index}" placeholder="998-405" ${enabled ? "" : "disabled"}>
+          <div class="line-suggest" id="${prefix}_suggest_${index}"></div>
+        </div>
+        <div>
+          <label>Description</label>
+          <input id="${prefix}_desc_${index}" placeholder="Lighting diagnostics" ${enabled ? "" : "disabled"}>
+        </div>
+        <div>
+          <label>Hours</label>
+          <input id="${prefix}_hrs_${index}" placeholder="1.0" ${enabled ? "" : "disabled"}>
+        </div>
+        <div>
+          <button type="button" class="remove-line-btn" data-kind="comp" data-prefix="${prefix}" data-index="${index}" ${index === 0 ? 'style="display:none"' : ""}>Remove</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function makePartRow(prefix, index, enabled = false) {
+  return `
+    <div class="line-row ${enabled ? "" : "line-disabled"}">
+      <div class="line-grid part-upgrade-grid">
+        <div>
+          <label>Part Number</label>
+          <input id="${prefix}_partno_${index}" placeholder="16-724" ${enabled ? "" : "disabled"}>
+        </div>
+        <div>
+          <label>Description</label>
+          <input id="${prefix}_partdesc_${index}" placeholder="7-way receptacle" ${enabled ? "" : "disabled"}>
+        </div>
+        <div>
+          <label>Qty</label>
+          <input id="${prefix}_qty_${index}" placeholder="1" ${enabled ? "" : "disabled"}>
+        </div>
+        <div>
+          <label>Unit Cost</label>
+          <input id="${prefix}_cost_${index}" placeholder="25.00" ${enabled ? "" : "disabled"}>
+        </div>
+        <div>
+          <label>Markup %</label>
+          <input id="${prefix}_markup_${index}" value="${DEFAULT_PART_MARKUP}" ${enabled ? "" : "disabled"}>
+        </div>
+        <div>
+          <label>Sell</label>
+          <input id="${prefix}_sell_${index}" disabled>
+        </div>
+        <div>
+          <button type="button" class="remove-line-btn" data-kind="part" data-prefix="${prefix}" data-index="${index}" ${index === 0 ? 'style="display:none"' : ""}>Remove</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function installUpgradeStyles() {
+  if (document.getElementById("gmtUpgradeStyles")) return;
+  const style = document.createElement("style");
+  style.id = "gmtUpgradeStyles";
+  style.textContent = `
+    .line-wrap{border:1px solid var(--border);border-radius:16px;padding:14px;background:#f8fafc;margin-top:14px}
+    .line-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}
+    .line-row{border:1px solid #dbe4ee;border-radius:14px;background:#fff;padding:10px;margin-top:10px}
+    .line-disabled{opacity:.45;background:#f1f5f9}
+    .line-grid{display:grid;gap:10px;align-items:end}
+    .comp-upgrade-grid{grid-template-columns:1.1fr 2fr .8fr auto}
+    .part-upgrade-grid{grid-template-columns:1.1fr 2fr .7fr .9fr .9fr .9fr auto}
+    .line-suggest{position:relative}
+    .line-suggest-list{position:absolute;left:0;right:0;top:4px;z-index:20;background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 10px 30px rgba(15,23,42,.12);max-height:220px;overflow:auto}
+    .line-suggest-item{padding:10px;cursor:pointer;border-bottom:1px solid #eef2f7;font-size:13px}
+    .line-suggest-item:last-child{border-bottom:none}
+    .line-suggest-item:hover{background:#f8fafc}
+    .line-total{font-weight:700;margin-top:10px;text-align:right}
+    @media (max-width:1150px){.comp-upgrade-grid,.part-upgrade-grid{grid-template-columns:1fr}.line-total{text-align:left}}
+  `;
+  document.head.appendChild(style);
+}
+
+function buildCompBlock(holderId, prefix, title) {
+  return `
+    <div class="line-wrap">
+      <div class="line-head">
+        <label>${title}</label>
+        <button type="button" id="add_${prefix}_line_btn">+ Add Line</button>
+      </div>
+      <div id="${holderId}"></div>
+    </div>
+  `;
+}
+
+function buildPartBlock(holderId, prefix, title) {
+  return `
+    <div class="line-wrap">
+      <div class="line-head">
+        <label>${title}</label>
+        <button type="button" id="add_${prefix}_line_btn">+ Add Line</button>
+      </div>
+      <div id="${holderId}"></div>
+      <div class="line-total">Parts Total: <span id="${prefix}_total">$0.00</span></div>
+    </div>
+  `;
+}
+
+function enableNextRow(prefix, rowType, max = MAX_LINE_ROWS) {
+  for (let i = 0; i < max; i++) {
+    const firstFieldId = rowType === "comp" ? `${prefix}_code_${i}` : `${prefix}_partno_${i}`;
+    const firstField = document.getElementById(firstFieldId);
+    const row = firstField?.closest(".line-row");
+    if (firstField && firstField.disabled) {
+      row?.classList.remove("line-disabled");
+      row?.querySelectorAll("input").forEach(inp => {
+        if (!inp.id.endsWith(`_sell_${i}`)) inp.disabled = false;
+      });
+      return;
+    }
+  }
+}
+
+function getCompRows(prefix, max = MAX_LINE_ROWS) {
+  const out = [];
+  for (let i = 0; i < max; i++) {
+    const code = document.getElementById(`${prefix}_code_${i}`)?.value?.trim() || "";
+    const desc = document.getElementById(`${prefix}_desc_${i}`)?.value?.trim() || "";
+    const hrs = document.getElementById(`${prefix}_hrs_${i}`)?.value?.trim() || "";
+    if (code || desc || hrs) out.push({ code, desc, hrs });
+  }
+  return out;
+}
+
+function getPartRows(prefix, max = MAX_LINE_ROWS) {
+  const out = [];
+  for (let i = 0; i < max; i++) {
+    const part_number = document.getElementById(`${prefix}_partno_${i}`)?.value?.trim() || "";
+    const description = document.getElementById(`${prefix}_partdesc_${i}`)?.value?.trim() || "";
+    const qty = money(document.getElementById(`${prefix}_qty_${i}`)?.value || 0);
+    const cost = money(document.getElementById(`${prefix}_cost_${i}`)?.value || 0);
+    const markup = money(document.getElementById(`${prefix}_markup_${i}`)?.value || DEFAULT_PART_MARKUP);
+    const sell = qty * cost * (1 + markup / 100);
+
+    const sellEl = document.getElementById(`${prefix}_sell_${i}`);
+    if (sellEl) sellEl.value = sell ? sell.toFixed(2) : "";
+
+    if (part_number || description || qty || cost) {
+      out.push({ part_number, description, qty, cost, markup, sell });
+    }
+  }
+  return out;
+}
+
+function setCompRows(prefix, rowsData, max = MAX_LINE_ROWS) {
+  for (let i = 0; i < max; i++) {
+    const code = document.getElementById(`${prefix}_code_${i}`);
+    const desc = document.getElementById(`${prefix}_desc_${i}`);
+    const hrs = document.getElementById(`${prefix}_hrs_${i}`);
+    const row = code?.closest(".line-row");
+    if (!code || !desc || !hrs) continue;
+
+    code.value = "";
+    desc.value = "";
+    hrs.value = "";
+    const enabled = i === 0;
+    code.disabled = !enabled;
+    desc.disabled = !enabled;
+    hrs.disabled = !enabled;
+    row?.classList.toggle("line-disabled", !enabled);
+  }
+
+  (rowsData || []).forEach((r, i) => {
+    enableNextRow(prefix, "comp", max);
+    const code = document.getElementById(`${prefix}_code_${i}`);
+    const desc = document.getElementById(`${prefix}_desc_${i}`);
+    const hrs = document.getElementById(`${prefix}_hrs_${i}`);
+    if (code) code.value = r.code || "";
+    if (desc) desc.value = r.desc || "";
+    if (hrs) hrs.value = r.hrs || "";
+  });
+}
+
+function setPartRows(prefix, rowsData, max = MAX_LINE_ROWS) {
+  for (let i = 0; i < max; i++) {
+    const a = document.getElementById(`${prefix}_partno_${i}`);
+    const b = document.getElementById(`${prefix}_partdesc_${i}`);
+    const c = document.getElementById(`${prefix}_qty_${i}`);
+    const d = document.getElementById(`${prefix}_cost_${i}`);
+    const e = document.getElementById(`${prefix}_markup_${i}`);
+    const s = document.getElementById(`${prefix}_sell_${i}`);
+    const row = a?.closest(".line-row");
+    if (!a || !b || !c || !d || !e || !s) continue;
+
+    a.value = "";
+    b.value = "";
+    c.value = "";
+    d.value = "";
+    e.value = DEFAULT_PART_MARKUP;
+    s.value = "";
+    const enabled = i === 0;
+    [a, b, c, d, e].forEach(inp => inp.disabled = !enabled);
+    row?.classList.toggle("line-disabled", !enabled);
+  }
+
+  (rowsData || []).forEach((r, i) => {
+    enableNextRow(prefix, "part", max);
+    const a = document.getElementById(`${prefix}_partno_${i}`);
+    const b = document.getElementById(`${prefix}_partdesc_${i}`);
+    const c = document.getElementById(`${prefix}_qty_${i}`);
+    const d = document.getElementById(`${prefix}_cost_${i}`);
+    const e = document.getElementById(`${prefix}_markup_${i}`);
+    if (a) a.value = r.part_number || "";
+    if (b) b.value = r.description || "";
+    if (c) c.value = r.qty || "";
+    if (d) d.value = r.cost || "";
+    if (e) e.value = r.markup || DEFAULT_PART_MARKUP;
+  });
+
+  calculatePartTotals();
+}
+
+function calculatePartTotals() {
+  const groups = ["parts", "m_parts"];
+  groups.forEach(prefix => {
+    const rowsLocal = getPartRows(prefix);
+    const total = rowsLocal.reduce((sum, r) => sum + money(r.sell), 0);
+    const totalNode = document.getElementById(`${prefix}_total`);
+    if (totalNode) totalNode.textContent = fmtMoney(total);
+  });
+}
+
+function calculateSellForRow(prefix, index) {
+  const qty = money(document.getElementById(`${prefix}_qty_${index}`)?.value || 0);
+  const cost = money(document.getElementById(`${prefix}_cost_${index}`)?.value || 0);
+  const markup = money(document.getElementById(`${prefix}_markup_${index}`)?.value || DEFAULT_PART_MARKUP);
+  const sell = qty * cost * (1 + markup / 100);
+  const sellEl = document.getElementById(`${prefix}_sell_${index}`);
+  if (sellEl) sellEl.value = sell ? sell.toFixed(2) : "";
+  return sell;
 }
 
 function formData() {
+  const diagRows = getCompRows("diag");
+  const repairRows = getCompRows("repair");
+  const partRows = getPartRows("parts");
+
   return {
     case_number: el("case_number")?.value.trim() || "",
     container_number: el("container_number")?.value.trim() || "",
@@ -199,12 +500,15 @@ function formData() {
     repair_description: el("repair_description")?.value.trim() || "",
     diag_ro_number: el("diag_ro_number")?.value.trim() || "",
     repair_ro_number: el("repair_ro_number")?.value.trim() || "",
-    diag_comp_code: el("diag_comp_code")?.value.trim() || "",
-    diag_cc_description: el("diag_cc_description")?.value.trim() || "",
-    diag_cc_hours: el("diag_cc_hours")?.value.trim() || "",
-    repair_comp_code: el("repair_comp_code")?.value.trim() || "",
-    repair_cc_description: el("repair_cc_description")?.value.trim() || "",
-    repair_cc_hours: el("repair_cc_hours")?.value.trim() || "",
+    diag_comp_code: (diagRows[0] || {}).code || "",
+    diag_cc_description: (diagRows[0] || {}).desc || "",
+    diag_cc_hours: (diagRows[0] || {}).hrs || "",
+    repair_comp_code: (repairRows[0] || {}).code || "",
+    repair_cc_description: (repairRows[0] || {}).desc || "",
+    repair_cc_hours: (repairRows[0] || {}).hrs || "",
+    diag_comp_rows: diagRows,
+    repair_comp_rows: repairRows,
+    part_rows: partRows,
     status: el("status")?.value || STATUS_OPTIONS[0],
     notes: el("notes")?.value.trim() || "",
   };
@@ -218,14 +522,12 @@ function setForm(item = {}) {
   if (el("repair_description")) el("repair_description").value = item.repair_description || "";
   if (el("diag_ro_number")) el("diag_ro_number").value = item.diag_ro_number || "";
   if (el("repair_ro_number")) el("repair_ro_number").value = item.repair_ro_number || "";
-  if (el("diag_comp_code")) el("diag_comp_code").value = item.diag_comp_code || "";
-  if (el("diag_cc_description")) el("diag_cc_description").value = item.diag_cc_description || "";
-  if (el("diag_cc_hours")) el("diag_cc_hours").value = item.diag_cc_hours || "";
-  if (el("repair_comp_code")) el("repair_comp_code").value = item.repair_comp_code || "";
-  if (el("repair_cc_description")) el("repair_cc_description").value = item.repair_cc_description || "";
-  if (el("repair_cc_hours")) el("repair_cc_hours").value = item.repair_cc_hours || "";
   if (el("status")) el("status").value = item.status || STATUS_OPTIONS[0];
   if (el("notes")) el("notes").value = item.notes || "";
+
+  setCompRows("diag", item.diag_comp_rows || (item.diag_comp_code ? [{ code: item.diag_comp_code, desc: item.diag_cc_description, hrs: item.diag_cc_hours }] : []));
+  setCompRows("repair", item.repair_comp_rows || (item.repair_comp_code ? [{ code: item.repair_comp_code, desc: item.repair_cc_description, hrs: item.repair_cc_hours }] : []));
+  setPartRows("parts", item.part_rows || []);
 }
 
 function resetForm() {
@@ -317,9 +619,12 @@ function statusClass(s) {
     : "s5";
 }
 
-function roCell(ro, code, desc, hrs) {
+function roCell(ro, code, desc, hrs, rowsData) {
   if (!ro) return "—";
-  const title = cleanValue([code, desc, hrs ? `${hrs} hr` : ""].filter(Boolean).join(" "));
+  const rowsDataSafe = Array.isArray(rowsData) ? rowsData : [];
+  const title = rowsDataSafe.length
+    ? rowsDataSafe.map(r => [r.code, r.desc, r.hrs ? `${r.hrs} hr` : ""].filter(Boolean).join(" ")).join(" | ")
+    : cleanValue([code, desc, hrs ? `${hrs} hr` : ""].filter(Boolean).join(" "));
   return `<span class="ro-hover" title="${escapeHtml(title || "No comp code details added")}">${escapeHtml(ro)}</span>`;
 }
 
@@ -368,8 +673,8 @@ function renderTable() {
         <td>${escapeHtml(item.chassis_number || "—")}</td>
         <td>${escapeHtml(item.location || "—")}</td>
         <td>${escapeHtml(item.repair_description || "—")}</td>
-        <td>${roCell(item.diag_ro_number, item.diag_comp_code, item.diag_cc_description, item.diag_cc_hours)}</td>
-        <td>${roCell(item.repair_ro_number, item.repair_comp_code, item.repair_cc_description, item.repair_cc_hours)}</td>
+        <td>${roCell(item.diag_ro_number, item.diag_comp_code, item.diag_cc_description, item.diag_cc_hours, item.diag_comp_rows)}</td>
+        <td>${roCell(item.repair_ro_number, item.repair_comp_code, item.repair_cc_description, item.repair_cc_hours, item.repair_comp_rows)}</td>
         <td><span class="status ${statusClass(item.status)}">${escapeHtml(item.status)}</span></td>
         <td>${escapeHtml(item.notes || "—")}</td>
         <td>
@@ -404,15 +709,13 @@ function openModal(id) {
   }
 
   if (el("m_diag_ro")) el("m_diag_ro").value = item.diag_ro_number || "";
-  if (el("m_diag_code")) el("m_diag_code").value = item.diag_comp_code || "";
-  if (el("m_diag_desc")) el("m_diag_desc").value = item.diag_cc_description || "";
-  if (el("m_diag_hours")) el("m_diag_hours").value = item.diag_cc_hours || "";
   if (el("m_rep_ro")) el("m_rep_ro").value = item.repair_ro_number || "";
   if (el("m_rep_ref")) el("m_rep_ref").value = item.diag_ro_number || "";
-  if (el("m_rep_code")) el("m_rep_code").value = item.repair_comp_code || "";
-  if (el("m_rep_desc")) el("m_rep_desc").value = item.repair_cc_description || "";
-  if (el("m_rep_hours")) el("m_rep_hours").value = item.repair_cc_hours || "";
   if (el("m_rep_notes")) el("m_rep_notes").value = item.notes || "";
+
+  setCompRows("m_diag", item.diag_comp_rows || (item.diag_comp_code ? [{ code: item.diag_comp_code, desc: item.diag_cc_description, hrs: item.diag_cc_hours }] : []));
+  setCompRows("m_repair", item.repair_comp_rows || (item.repair_comp_code ? [{ code: item.repair_comp_code, desc: item.repair_cc_description, hrs: item.repair_cc_hours }] : []));
+  setPartRows("m_parts", item.part_rows || []);
 
   if (el("emailModal")) el("emailModal").classList.remove("hidden");
   renderEmails();
@@ -427,12 +730,11 @@ function buildDiagEmail(item) {
   const greeting = el("m_diag_greeting")?.value.trim() || "Hello Amz,";
   const opening = el("m_diag_opening")?.value.trim() || "Thank you for the opportunity";
   const ro = el("m_diag_ro")?.value.trim() || "";
-  const code = el("m_diag_code")?.value.trim() || "";
-  const desc = el("m_diag_desc")?.value.trim() || "";
-  const hrs = money(el("m_diag_hours")?.value);
-  const rate = money(el("m_diag_rate")?.value || 89);
-  const total = hrs * rate;
-  const cc = [code, desc, hrs ? `${hrs}hr` : ""].filter(Boolean).join(" ");
+  const rate = money(el("m_diag_rate")?.value || DEFAULT_LABOR_RATE);
+  const rowsLocal = getCompRows("m_diag");
+  const total = rowsLocal.reduce((sum, r) => sum + money(r.hrs) * rate, 0);
+
+  const lines = rowsLocal.map(r => [r.code, r.desc, r.hrs ? `${r.hrs}hr` : ""].filter(Boolean).join(" ")).join("\n");
 
   return `${greeting}
 ${opening}
@@ -444,7 +746,7 @@ Container ${item.container_number || ""}
 Chassis ${item.chassis_number || ""}
 Concern ${item.repair_description || ""}
 
-${cc ? cc + "\n" : ""}${desc || "Diagnosis"} ${hrs || 0} hour${hrs === 1 ? "" : "s"} @ ${fmtMoney(rate)}
+${lines}
 Total=${fmtMoney(total)}`.trim();
 }
 
@@ -452,18 +754,27 @@ function buildRepairEmail(item) {
   const greeting = el("m_rep_greeting")?.value.trim() || "Hello Amz,";
   const ro = el("m_rep_ro")?.value.trim() || "";
   const ref = el("m_rep_ref")?.value.trim() || "";
-  const code = el("m_rep_code")?.value.trim() || "";
-  const desc = el("m_rep_desc")?.value.trim() || "";
-  const hrs = money(el("m_rep_hours")?.value);
-  const rate = money(el("m_rep_rate")?.value || 89);
+  const rate = money(el("m_rep_rate")?.value || DEFAULT_LABOR_RATE);
   const travelHours = money(el("m_rep_travel_hours")?.value);
-  const travelRate = money(el("m_rep_travel_rate")?.value || 89);
+  const travelRate = money(el("m_rep_travel_rate")?.value || DEFAULT_LABOR_RATE);
   const notes = el("m_rep_notes")?.value.trim() || "";
   const completion = el("m_rep_completion")?.value.trim() || "";
-  const labor = hrs * rate;
+
+  const compRows = getCompRows("m_repair");
+  const partRows = getPartRows("m_parts");
+
+  const compText = compRows
+    .map(r => [r.code, r.desc, r.hrs ? `${r.hrs}hr` : ""].filter(Boolean).join(" "))
+    .join("\n");
+
+  const partsText = partRows
+    .map(r => `${r.part_number || ""} ${r.description || ""} Qty ${r.qty || 0} Sell ${fmtMoney(money(r.sell))}`.trim())
+    .join("\n");
+
+  const labor = compRows.reduce((sum, r) => sum + money(r.hrs) * rate, 0);
   const travel = travelHours * travelRate;
-  const total = labor + travel;
-  const cc = [code, desc, hrs ? `${hrs}hr` : ""].filter(Boolean).join(" ");
+  const parts = partRows.reduce((sum, r) => sum + money(r.sell), 0);
+  const total = labor + travel + parts;
 
   return `${greeting}
 Here is the Repair Order number to complete the repairs on RO ${ro || "__________"}
@@ -476,8 +787,8 @@ Chassis ${item.chassis_number || ""}
 Concern ${item.repair_description || ""}
 
 Repair Estimate
-${cc ? cc + "\n" : ""}Total Labor hours ${hrs || 0} For ${desc || "Repair"} =${fmtMoney(labor)}
-${travelHours ? `${travelHours} Hour Travel Time Total = ${fmtMoney(travel)}\n` : ""}Total ${fmtMoney(total)}
+${compText ? compText + "\n" : ""}${partsText ? partsText + "\n" : ""}Labor Total = ${fmtMoney(labor)}
+${travelHours ? `Travel = ${fmtMoney(travel)}\n` : ""}${parts ? `Parts = ${fmtMoney(parts)}\n` : ""}Total ${fmtMoney(total)}
 ${completion ? "\n" + completion : ""}
 
 ${notes ? "Tech Notes:\n" + notes : ""}`.trim();
@@ -495,15 +806,22 @@ async function saveModal() {
   if (!item) return;
 
   try {
+    const diagRows = getCompRows("m_diag");
+    const repairRows = getCompRows("m_repair");
+    const partRows = getPartRows("m_parts");
+
     const payload = {
       diag_ro_number: el("m_diag_ro")?.value.trim() || "",
-      diag_comp_code: el("m_diag_code")?.value.trim() || "",
-      diag_cc_description: el("m_diag_desc")?.value.trim() || "",
-      diag_cc_hours: el("m_diag_hours")?.value.trim() || "",
       repair_ro_number: el("m_rep_ro")?.value.trim() || "",
-      repair_comp_code: el("m_rep_code")?.value.trim() || "",
-      repair_cc_description: el("m_rep_desc")?.value.trim() || "",
-      repair_cc_hours: el("m_rep_hours")?.value.trim() || "",
+      diag_comp_rows: diagRows,
+      repair_comp_rows: repairRows,
+      part_rows: partRows,
+      diag_comp_code: (diagRows[0] || {}).code || "",
+      diag_cc_description: (diagRows[0] || {}).desc || "",
+      diag_cc_hours: (diagRows[0] || {}).hrs || "",
+      repair_comp_code: (repairRows[0] || {}).code || "",
+      repair_cc_description: (repairRows[0] || {}).desc || "",
+      repair_cc_hours: (repairRows[0] || {}).hrs || "",
       notes: el("m_rep_notes")?.value.trim() || "",
       updated_at: new Date().toISOString(),
     };
@@ -576,72 +894,6 @@ async function handleSession(session) {
   await setupRealtime();
 }
 
-// ===== SAFE COMP CODE UPGRADE =====
-
-async function loadCompCatalog() {
-  try {
-    const res = await fetch("./comp_codes.txt");
-    const txt = await res.text();
-    const lines = txt.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
-
-    const parsed = [];
-    for (const line of lines) {
-      const parts = line.split(/\t+/).map(x => x.trim()).filter(Boolean);
-      if (parts.length >= 2) {
-        parsed.push({ code: parts[1], desc: parts[0] });
-      }
-    }
-    COMP_CATALOG = parsed;
-    attachCompCodeLookup();
-  } catch (err) {
-    console.error("Could not load comp codes", err);
-    COMP_CATALOG = [];
-  }
-}
-
-function attachCompCodeLookup() {
-  let list = document.getElementById("compCodeList");
-  if (!list) {
-    list = document.createElement("datalist");
-    list.id = "compCodeList";
-    document.body.appendChild(list);
-  }
-
-  list.innerHTML = COMP_CATALOG
-    .slice(0, 500)
-    .map(c => `<option value="${escapeHtml(c.code)}">${escapeHtml(c.code)} - ${escapeHtml(c.desc)}</option>`)
-    .join("");
-
-  ["diag_comp_code", "repair_comp_code", "m_diag_code", "m_rep_code"].forEach((id) => {
-    const input = el(id);
-    if (input) input.setAttribute("list", "compCodeList");
-  });
-}
-
-function findCompMatch(value) {
-  const q = String(value || "").trim().toLowerCase();
-  if (!q) return null;
-
-  return COMP_CATALOG.find(c =>
-    c.code.toLowerCase() === q ||
-    c.code.toLowerCase().includes(q) ||
-    c.desc.toLowerCase().includes(q)
-  ) || null;
-}
-
-function autofillCompPair(codeId, descId) {
-  const codeEl = el(codeId);
-  const descEl = el(descId);
-  if (!codeEl || !descEl) return;
-
-  const match = findCompMatch(codeEl.value);
-  if (match && !descEl.value.trim()) {
-    descEl.value = match.desc;
-  }
-
-  if (activeCaseId) renderEmails();
-}
-
 async function init() {
   if (!HAS_CONFIG) {
     const authView = el("authView");
@@ -704,24 +956,79 @@ function bindEvents() {
   el("saveModalBtn")?.addEventListener("click", saveModal);
 
   [
-    "m_diag_greeting","m_diag_opening","m_diag_ro","m_diag_code","m_diag_desc","m_diag_hours","m_diag_rate",
-    "m_rep_greeting","m_rep_ro","m_rep_ref","m_rep_code","m_rep_desc","m_rep_hours","m_rep_rate",
+    "m_diag_greeting","m_diag_opening","m_diag_ro","m_diag_rate",
+    "m_rep_greeting","m_rep_ro","m_rep_ref","m_rep_rate",
     "m_rep_travel_hours","m_rep_travel_rate","m_rep_notes","m_rep_completion"
   ].forEach((id) => {
     el(id)?.addEventListener("input", renderEmails);
   });
 
-  el("diag_comp_code")?.addEventListener("input", () => autofillCompPair("diag_comp_code", "diag_cc_description"));
-  el("repair_comp_code")?.addEventListener("input", () => autofillCompPair("repair_comp_code", "repair_cc_description"));
-  el("m_diag_code")?.addEventListener("input", () => autofillCompPair("m_diag_code", "m_diag_desc"));
-  el("m_rep_code")?.addEventListener("input", () => autofillCompPair("m_rep_code", "m_rep_desc"));
+  document.addEventListener("input", (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLInputElement)) return;
 
-  el("diag_comp_code")?.addEventListener("blur", () => autofillCompPair("diag_comp_code", "diag_cc_description"));
-  el("repair_comp_code")?.addEventListener("blur", () => autofillCompPair("repair_comp_code", "repair_cc_description"));
-  el("m_diag_code")?.addEventListener("blur", () => autofillCompPair("m_diag_code", "m_diag_desc"));
-  el("m_rep_code")?.addEventListener("blur", () => autofillCompPair("m_rep_code", "m_rep_desc"));
+    if (t.id.match(/^(diag|repair|m_diag|m_repair)_code_\d+$/)) {
+      const match = t.id.match(/^(diag|repair|m_diag|m_repair)_code_(\d+)$/);
+      if (!match) return;
+      const prefix = match[1];
+      const idx = match[2];
+      const found = findCompMatch(t.value);
+      if (found) {
+        const descEl = document.getElementById(`${prefix}_desc_${idx}`);
+        if (descEl && !descEl.value.trim()) descEl.value = found.desc;
+      }
+      showCompSuggestions(prefix, idx, t.value);
+      renderEmails();
+      return;
+    }
+
+    if (
+      t.id.match(/^(diag|repair|m_diag|m_repair)_(desc|hrs)_\d+$/) ||
+      t.id.match(/^(parts|m_parts)_(partno|partdesc|qty|cost|markup)_\d+$/)
+    ) {
+      const sellMatch = t.id.match(/^(parts|m_parts)_(?:partno|partdesc|qty|cost|markup)_(\d+)$/);
+      if (sellMatch) calculateSellForRow(sellMatch[1], sellMatch[2]);
+      calculatePartTotals();
+      renderEmails();
+    }
+  });
 
   document.addEventListener("click", (e) => {
+    const suggestPick = e.target.closest(".line-suggest-item");
+    if (suggestPick) {
+      const prefix = suggestPick.getAttribute("data-prefix");
+      const idx = suggestPick.getAttribute("data-index");
+      const code = suggestPick.getAttribute("data-code");
+      const desc = suggestPick.getAttribute("data-desc");
+      const codeEl = document.getElementById(`${prefix}_code_${idx}`);
+      const descEl = document.getElementById(`${prefix}_desc_${idx}`);
+      if (codeEl) codeEl.value = code;
+      if (descEl) descEl.value = desc;
+      hideCompSuggestions();
+      renderEmails();
+      return;
+    }
+
+    const removeBtn = e.target.closest(".remove-line-btn");
+    if (removeBtn) {
+      const prefix = removeBtn.getAttribute("data-prefix");
+      const index = removeBtn.getAttribute("data-index");
+      ["code","desc","hrs","partno","partdesc","qty","cost","markup","sell"].forEach(key => {
+        const node = document.getElementById(`${prefix}_${key}_${index}`);
+        if (node) node.value = "";
+      });
+      calculatePartTotals();
+      renderEmails();
+      return;
+    }
+
+    if (e.target.id === "add_diag_line_btn") return enableNextRow("diag", "comp");
+    if (e.target.id === "add_repair_line_btn") return enableNextRow("repair", "comp");
+    if (e.target.id === "add_parts_line_btn") return enableNextRow("parts", "part");
+    if (e.target.id === "add_m_diag_line_btn") return enableNextRow("m_diag", "comp");
+    if (e.target.id === "add_m_repair_line_btn") return enableNextRow("m_repair", "comp");
+    if (e.target.id === "add_m_parts_line_btn") return enableNextRow("m_parts", "part");
+
     const caseBtn = e.target.closest("[data-id]");
     if (caseBtn) {
       openModal(caseBtn.getAttribute("data-id"));
@@ -745,10 +1052,61 @@ function bindEvents() {
       deleteItem(delBtn.getAttribute("data-del"));
       return;
     }
+
+    if (!e.target.closest(".line-suggest")) hideCompSuggestions();
   });
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  installUpgradeStyles();
+
+  const diagCompHost = document.getElementById("diag_comp_code")?.closest(".form-grid.three");
+  const repairCompHost = document.getElementById("repair_comp_code")?.closest(".form-grid.three");
+  const notesHost = document.getElementById("notes")?.closest(".form-grid");
+  const mDiagCompHost = document.getElementById("m_diag_code")?.closest(".form-grid.three");
+  const mRepairCompHost = document.getElementById("m_rep_code")?.closest(".form-grid.three");
+  const mRepNotesHost = document.getElementById("m_rep_notes")?.closest(".form-grid");
+
+  if (diagCompHost) {
+    diagCompHost.outerHTML = buildCompBlock("diagCompRows", "diag", "Diag Comp Lines");
+  }
+  if (repairCompHost) {
+    repairCompHost.outerHTML = buildCompBlock("repairCompRows", "repair", "Repair Comp Lines");
+  }
+  if (notesHost) {
+    notesHost.insertAdjacentHTML("beforebegin", buildPartBlock("partsRows", "parts", "Parts Lines"));
+  }
+  if (mDiagCompHost) {
+    mDiagCompHost.outerHTML = buildCompBlock("mDiagCompRows", "m_diag", "Diag Comp Lines");
+  }
+  if (mRepairCompHost) {
+    mRepairCompHost.outerHTML = buildCompBlock("mRepairCompRows", "m_repair", "Repair Comp Lines");
+  }
+  if (mRepNotesHost) {
+    mRepNotesHost.insertAdjacentHTML("beforebegin", buildPartBlock("mPartsRows", "m_parts", "Parts Lines"));
+  }
+
+  const seeds = [
+    ["diagCompRows", "diag", "comp"],
+    ["repairCompRows", "repair", "comp"],
+    ["partsRows", "parts", "part"],
+    ["mDiagCompRows", "m_diag", "comp"],
+    ["mRepairCompRows", "m_repair", "comp"],
+    ["mPartsRows", "m_parts", "part"],
+  ];
+
+  seeds.forEach(([holderId, prefix, type]) => {
+    const holder = document.getElementById(holderId);
+    if (!holder) return;
+    holder.innerHTML = "";
+    for (let i = 0; i < MAX_LINE_ROWS; i++) {
+      holder.insertAdjacentHTML(
+        "beforeend",
+        type === "comp" ? makeCompRow(prefix, i, i === 0) : makePartRow(prefix, i, i === 0)
+      );
+    }
+  });
+
   bindEvents();
   resetForm();
   init();
